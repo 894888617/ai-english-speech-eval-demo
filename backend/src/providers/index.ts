@@ -1,17 +1,13 @@
 import { config } from "../config.js";
 import { ProviderName, SpeechEvaluationProvider, TtsProvider } from "../types.js";
-import { MockSpeechEvaluationProvider } from "./mockSpeechEvaluationProvider.js";
+import { MockSpeechEvaluationProvider } from "./speech-evaluation/MockSpeechEvaluationProvider.js";
+import { XfyunSpeechEvaluationProvider } from "./speech-evaluation/XfyunSpeechEvaluationProvider.js";
 import { MockTtsProvider } from "./mockTtsProvider.js";
-import { TencentTtsProvider, XfyunSpeechEvaluationProvider, YoudaoTtsProvider } from "./placeholderProviders.js";
+import { TencentTtsProvider, YoudaoTtsProvider } from "./placeholderProviders.js";
 
 function hasTtsCredentials(provider: ProviderName) {
   if (provider === "tencent") return Boolean(config.credentials.tencent.secretId && config.credentials.tencent.secretKey);
   if (provider === "youdao") return Boolean(config.credentials.youdao.appKey && config.credentials.youdao.appSecret);
-  return false;
-}
-
-function hasEvaluationCredentials(provider: ProviderName) {
-  if (provider === "xfyun") return Boolean(config.credentials.xfyun.appId && config.credentials.xfyun.apiKey && config.credentials.xfyun.apiSecret);
   return false;
 }
 
@@ -22,7 +18,7 @@ export function createTtsProvider(): TtsProvider {
 }
 
 export function createEvaluationProvider(): SpeechEvaluationProvider {
-  if (config.evaluationProvider === "xfyun" && hasEvaluationCredentials("xfyun")) return new XfyunSpeechEvaluationProvider();
+  if (config.evaluationProvider === "xfyun") return new XfyunSpeechEvaluationProvider();
   return new MockSpeechEvaluationProvider();
 }
 

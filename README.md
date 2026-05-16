@@ -2,19 +2,20 @@
 
 ## 1. 项目说明
 
-本仓库是一个用于验证“AI 英语绘本跟读评测”能力的 Web Demo。它不是完整业务系统，只聚焦：标准朗读、浏览器录音、本地音频上传、语音评测、ASR 转写、错词建议、单词级评分、接口耗时统计和本地评测日志。
+本仓库是一个用于验证“AI 英语绘本跟读评测”能力的 Web Demo。它聚焦标准朗读、浏览器录音、本地音频上传、语音评测、ASR 转写、错词建议、单词级评分、接口耗时统计和本地评测日志。
 
-默认不需要任何真实三方 API Key。没有配置真实凭证时，后端会自动使用 Mock Provider，方便本地演示和需求评审。
+默认使用 Mock Provider，不需要任何真实三方 API Key。配置 `EVALUATION_PROVIDER=xfyun` 并提供讯飞密钥后，后端 `/api/evaluate` 会调用科大讯飞“语音评测 / ISE / 流式版”WebSocket 接口。
 
 ## 2. 功能清单
 
 - React + Vite + TypeScript 前端页面。
 - Node.js + Express + TypeScript REST API 后端。
 - 左侧操作区：英文句子输入、内置句子选择、音频上传、标准朗读、录音、提交评测、清空结果。
-- 右侧结果区：总分、准确度、流利度、完整度、清晰度、ASR、评测状态、TTS/上传/评测/总耗时。
+- 右侧结果区：总分、准确度、流利度、完整度、清晰度、ASR、评测状态、Provider、音频转换格式、TTS/上传/评测/总耗时。
 - 中文纠错建议和单词级评分展示，低分词标红，中等分词标黄。
-- Mock TTS 与 Mock 语音评测 Provider。
-- Xfyun 语音评测、Tencent TTS、Youdao TTS 的占位接入结构。
+- 调试信息折叠区：provider、convertedAudioPath/Format、讯飞 response code、sid、raw result 简略内容；不会展示 API Key 或 API Secret。
+- Mock TTS、Mock 语音评测 Provider。
+- 科大讯飞语音评测真实 Provider：WebSocket 鉴权、音频转换、分帧上传、XML 结果解析、错误兜底。
 - 本地 JSON 文件保存最近评测日志，可通过接口查询。
 
 ## 3. 本地启动方式
@@ -43,7 +44,7 @@ Vite 已配置代理，前端访问 `/api` 和 `/static` 会转发到后端。
 
 ## 4. 环境变量说明
 
-复制根目录 `.env.example` 到 `.env` 或 `backend/.env` 后按需修改。
+复制根目录 `.env.example` 到 `.env` 或 `backend/.env` 后按需修改。不要提交真实 `.env`。
 
 ```env
 PORT=3001
@@ -55,6 +56,10 @@ EVALUATION_PROVIDER=mock
 XFYUN_APP_ID=
 XFYUN_API_KEY=
 XFYUN_API_SECRET=
+XFYUN_ISE_ENDPOINT=
+XFYUN_ISE_LANGUAGE=en
+XFYUN_ISE_CATEGORY=read_sentence
+XFYUN_ISE_AUDIO_RATE=16000
 
 TENCENT_SECRET_ID=
 TENCENT_SECRET_KEY=
@@ -70,41 +75,173 @@ STATIC_DIR=./static
 说明：
 
 - `TTS_PROVIDER` 支持 `mock | xfyun | tencent | youdao`，当前可运行实现为 `mock`，Tencent/Youdao 为占位结构。
-- `EVALUATION_PROVIDER` 支持 `mock | xfyun | tencent | youdao`，当前可运行实现为 `mock`，Xfyun 为占位结构。
-- 没有填写对应 Provider 凭证时，后端会自动回退到 Mock，避免 Demo 不可用。
-- `UPLOAD_DIR` 保存上传/录音文件。
+- `EVALUATION_PROVIDER=mock` 时始终使用 Mock 评测。
+- `EVALUATION_PROVIDER=xfyun` 时使用真实讯飞 Provider；如果缺少 `XFYUN_APP_ID`、`XFYUN_API_KEY` 或 `XFYUN_API_SECRET`，启动不会崩溃，但调用 `/api/evaluate` 会返回 `status=failed` 和 `message=XFYUN credentials are not configured`。
+- `XFYUN_ISE_ENDPOINT` 为空时，代码默认使用 `wss://ise-api.xfyun.cn/v2/open-ise`；如官方文档变更，请以讯飞控制台/官方文档为准。
+- `UPLOAD_DIR` 保存上传/录音文件和 `uploads/converted` 转换后 PCM 文件。
 - `STATIC_DIR` 保存 Mock TTS 静态音频文件。
 
-## 5. Mock 模式说明
+## 5. Mock 模式如何启动
+
+`.env` 保持：
+
+```env
+EVALUATION_PROVIDER=mock
+TTS_PROVIDER=mock
+```
+
+然后分别启动后端和前端：
+
+```bash
+cd backend
+npm run dev
+```
+
+```bash
+cd frontend
+npm run dev
+```
 
 Mock 模式用于无真实 API Key 的本地演示：
 
-- `POST /api/tts` 返回一个本地静态 mp3 占位文件地址；前端同时调用浏览器 `speechSynthesis` 播放可听的英文标准读音作为兜底。
+- `POST /api/tts` 返回本地静态 mp3 占位文件地址；前端同时调用浏览器 `speechSynthesis` 播放可听的英文标准读音作为兜底。
 - `POST /api/evaluate` 根据目标句子词数、音频文件大小推算伪时长，并生成稳定但有轻微差异的评分。
 - `Hello.` 的 Mock ASR 可能返回 `Hello.` 或 `The.`，用于演示错读效果。
 - `wordScores` 始终返回数据，便于演示低分词标红和纠错建议。
 - 评测日志写入 `backend/data/evaluation-logs.json`。
 
-## 6. 如何替换真实语音评测 API
+## 6. 接入科大讯飞语音评测
 
-后端语音评测抽象位于 `backend/src/types.ts` 的 `SpeechEvaluationProvider`。替换真实服务时建议：
+### 6.1 注册账号
 
-1. 在 `backend/src/providers/` 新增或完善具体 Provider，例如完善 `XfyunSpeechEvaluationProvider`。
-2. 从 `.env` 读取 App ID、API Key、Secret，禁止硬编码密钥。
-3. 在 Provider 内将上传音频转换为第三方 API 需要的格式。
-4. 将第三方响应标准化为统一结构：`scores`、`asrText`、`wordScores`、`suggestions`、`timing`。
-5. 在 `backend/src/providers/index.ts` 中按凭证是否完整选择真实 Provider，否则继续回退 Mock。
-6. 用 `GET /api/health` 检查当前 Provider 是否切换成功。
+1. 打开科大讯飞开放平台：<https://www.xfyun.cn/>。
+2. 注册并登录账号。
+3. 按平台要求完成实名认证。
+4. 确认可用额度、套餐或试用次数满足测试需要。
 
-## 7. 如何替换真实 TTS API
+### 6.2 创建应用
 
-后端 TTS 抽象位于 `backend/src/types.ts` 的 `TtsProvider`。替换真实 TTS 时建议：
+1. 进入讯飞开放平台控制台。
+2. 创建 WebAPI 平台应用。
+3. 记录该应用的 `AppID`、`APIKey`、`APISecret`。
+4. 确认三项凭证来自同一个应用，且不要写入代码。
 
-1. 完善 `TencentTtsProvider` 或 `YoudaoTtsProvider`，也可新增其他 Provider。
-2. 使用 `.env` 管理所有密钥和区域配置。
-3. 将第三方合成音频保存到 `STATIC_DIR/tts`，返回 `/static/tts/xxx.mp3`。
-4. 返回统一结构：`audioUrl`、`durationMs`、`provider`、`raw`。
-5. 如果第三方调用失败，可保留 Mock 兜底逻辑，保证演示可继续。
+### 6.3 开通语音评测能力
+
+1. 在应用能力或服务页面添加“语音评测 / ISE / 流式版”。
+2. 确认服务状态为已开通。
+3. 确认接口地址与官方文档一致，默认流式版地址为 `wss://ise-api.xfyun.cn/v2/open-ise`。
+
+### 6.4 配置真实评测模式
+
+在 `.env` 或 `backend/.env` 中配置：
+
+```env
+EVALUATION_PROVIDER=xfyun
+XFYUN_APP_ID=your_app_id
+XFYUN_API_KEY=your_api_key
+XFYUN_API_SECRET=your_api_secret
+XFYUN_ISE_ENDPOINT=
+XFYUN_ISE_LANGUAGE=en
+XFYUN_ISE_CATEGORY=read_sentence
+XFYUN_ISE_AUDIO_RATE=16000
+```
+
+> `XFYUN_ISE_ENDPOINT` 可以留空，代码会使用默认值；如果讯飞官方文档或控制台给出新地址，请填写官方地址。
+
+### 6.5 启动真实评测模式
+
+```bash
+cd backend
+npm run dev
+```
+
+```bash
+cd frontend
+npm run dev
+```
+
+打开 <http://localhost:5173>，录音或上传音频后点击“提交评测”。
+
+### 6.6 支持的音频格式
+
+前端允许上传：
+
+- 浏览器录音：通常为 `webm/opus`。
+- 本地文件：`wav`、`mp3`、`m4a`、`webm`。
+
+后端会使用 ffmpeg 转换为讯飞评测更通用的格式：
+
+- 16kHz
+- 16bit
+- mono
+- PCM `s16le`
+
+转换后的临时文件保存在 `uploads/converted`，后端会保留最近约 30 个文件用于调试，避免无限增长。
+
+### 6.7 如何判断接口真实调用成功
+
+- 前端总分卡片显示 `complete · xfyun`。
+- 前端“调试信息”中 `provider` 为 `xfyun`，并出现 `xfyun sid`。
+- `xfyun response code` 为 `0`。
+- `raw result` 中可以看到讯飞返回的 XML/解析结果摘要。
+- 访问 <http://localhost:3001/api/evaluation/logs>，日志中 `provider` 为 `xfyun`，并包含 `xfyunSid`、`xfyunCode`、`convertedAudioFormat`。
+
+### 6.8 常见错误排查
+
+- `XFYUN credentials are not configured`：缺少 `XFYUN_APP_ID`、`XFYUN_API_KEY` 或 `XFYUN_API_SECRET`。补全 `.env` 后重启后端。
+- `401 / HMAC signature`：检查 APIKey/APISecret 是否正确、是否属于同一个应用；检查服务器时间是否准确；检查 endpoint host/path 是否与签名一致。
+- `appid 无权限` 或服务未开通：进入讯飞控制台确认应用已经开通 ISE 流式版。
+- 音频转换失败：确认 `npm install` 成功安装 `ffmpeg-static`；检查源音频是否损坏。
+- 音频采样率不正确：保持 `XFYUN_ISE_AUDIO_RATE=16000`，并确认后端调试信息中转换后格式为 `pcm_s16le;rate=16000;channels=1`。
+- WebSocket timeout：检查网络、账号额度、音频时长；必要时设置 `XFYUN_ISE_TIMEOUT_MS=30000`。
+- 返回结果为空：检查试题文本、语言 `XFYUN_ISE_LANGUAGE` 和题型 `XFYUN_ISE_CATEGORY` 是否匹配。
+- 没有单词级评分：部分题型或参数可能不返回单词级明细；系统会继续展示总分并给出提示。
+
+### 6.9 如何回退 Mock 模式
+
+把 `.env` 改回：
+
+```env
+EVALUATION_PROVIDER=mock
+```
+
+重启后端即可。Mock Provider 不依赖任何讯飞配置。
+
+## 7. 后端接口
+
+### `GET /api/health`
+
+返回当前运行模式和 Provider 名称。
+
+### `POST /api/evaluate`
+
+请求仍然是 `multipart/form-data`：
+
+- `text`：待评测英文文本。
+- `audio`：录音或上传音频文件。
+- `source`：`browser` 或 `upload`。
+
+返回结构保持前端兼容，并扩展调试字段：
+
+- `provider`
+- `originalAudioMimeType`
+- `convertedAudioFormat`
+- `convertedAudioPath`
+- `xfyunSid`
+- `xfyunCode`
+- `raw`
+
+失败时不会导致服务崩溃，会返回：
+
+```json
+{
+  "status": "failed",
+  "provider": "xfyun",
+  "message": "Readable error message",
+  "errorCode": "XFYUN_EVALUATION_FAILED"
+}
+```
 
 ## 8. 测试流程
 
@@ -114,26 +251,21 @@ Mock 模式用于无真实 API Key 的本地演示：
 4. 点击“播放标准读音”，确认能听到浏览器朗读或看到标准读音播放器有音频源。
 5. 点击“开始录音”，允许浏览器麦克风权限后朗读句子。
 6. 点击“停止录音”，确认“待评测音频播放器”可以回放。
-7. 点击“提交评测”，确认右侧出现评分、ASR、建议、单词级结果和耗时。
+7. 点击“提交评测”，确认右侧出现评分、ASR、建议、单词级结果、耗时和调试信息。
 8. 改用本地 wav/mp3/webm/m4a 音频上传，再提交一次评测。
 9. 访问 <http://localhost:3001/api/evaluation/logs> 查看最近 20 条评测日志。
+10. 真实讯飞验收可参考 `docs/xfyun-test-guide.md`。
 
 ## 9. Demo 验收标准
 
-- 不配置任何真实 API Key，也能跑通完整 Demo。
-- 页面可以输入英文句子，并可选择内置 5 条句子。
-- 页面可以播放标准读音。
-- 页面可以浏览器录音。
-- 页面可以上传 wav、mp3、webm、m4a 音频。
-- 点击提交评测后，可以返回评分结果。
-- 可以展示总分、准确度、流利度、完整度、清晰度。
-- 可以展示 ASR 转写。
-- 可以展示中文纠错建议。
-- 可以展示单词级评分，并对低分词标红、中分词标黄。
-- 可以展示 TTS、上传、评测和总耗时。
-- 评测日志可以在后端保存并通过接口查看。
-- 代码中不得硬编码任何 API Key。
-- README 可让非项目开发人员按步骤启动。
+- 不配置任何真实 API Key，也能跑通完整 Mock Demo。
+- `EVALUATION_PROVIDER=xfyun` 且配置真实密钥后，可以调用真实讯飞语音评测。
+- 页面可以浏览器录音、上传 wav/mp3/webm/m4a 音频，并提交评测。
+- 可以展示总分、准确度、流利度、完整度、清晰度、ASR 转写、中文纠错建议和单词级评分。
+- 可以展示 provider、音频转换格式、评测耗时、总耗时和 raw 调试信息。
+- 如果讯飞不返回单词级结果，系统不报错，并给出提示。
+- 所有 API Key 都只从 `.env` 读取，代码和 `.env.example` 不包含真实密钥。
+- Mock Provider 保留可用，不破坏现有前端页面。
 
 ## 10. 后续迁移到微信小程序的注意事项
 

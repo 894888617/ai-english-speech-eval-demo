@@ -71,10 +71,17 @@ app.post("/api/evaluate", upload.single("audio"), async (req, res, next) => {
       audioPath: req.file.path,
       audioMimeType: req.file.mimetype || "application/octet-stream"
     });
-    const totalMs = Date.now() - requestStartedAt + result.timing.evaluationMs;
+    const totalMs = Date.now() - requestStartedAt;
+    const rawRecord = result.raw && typeof result.raw === "object" ? (result.raw as Record<string, unknown>) : {};
+    const conversion = rawRecord.conversion && typeof rawRecord.conversion === "object" ? rawRecord.conversion as Record<string, unknown> : {};
     const response = {
       ...result,
       provider: evaluationProvider.name,
+      originalAudioMimeType: req.file.mimetype || "application/octet-stream",
+      convertedAudioFormat: typeof conversion.convertedAudioFormat === "string" ? conversion.convertedAudioFormat : undefined,
+      convertedAudioPath: typeof conversion.convertedAudioPath === "string" ? path.relative(process.cwd(), conversion.convertedAudioPath) : undefined,
+      xfyunSid: typeof rawRecord.sid === "string" ? rawRecord.sid : undefined,
+      xfyunCode: typeof rawRecord.code === "number" ? rawRecord.code : undefined,
       timing: {
         uploadMs,
         evaluationMs: result.timing.evaluationMs,
@@ -90,6 +97,12 @@ app.post("/api/evaluate", upload.single("audio"), async (req, res, next) => {
       scores: response.scores,
       asrText: response.asrText,
       createdAt: new Date().toISOString(),
+      originalAudioMimeType: response.originalAudioMimeType,
+      convertedAudioFormat: response.convertedAudioFormat,
+      convertedAudioPath: response.convertedAudioPath,
+      xfyunSid: response.xfyunSid,
+      xfyunCode: response.xfyunCode,
+      errorMessage: response.status === "failed" ? response.message || response.suggestions?.[0] : undefined,
       timing: response.timing
     });
 

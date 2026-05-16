@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { SpeechEvaluationProvider, WordScore } from "../types.js";
+import { SpeechEvaluationProvider, WordScore } from "../../types.js";
 
 function clamp(value: number, min = 45, max = 100) {
   return Math.max(min, Math.min(max, value));
@@ -20,9 +20,9 @@ function deterministicNoise(seed: string, index: number) {
 }
 
 function statusFromScore(score: number): WordScore["status"] {
-  if (score < 70) return "bad";
-  if (score <= 85) return "warning";
-  return "ok";
+  if (score >= 85) return "ok";
+  if (score >= 70) return "warning";
+  return "bad";
 }
 
 export class MockSpeechEvaluationProvider implements SpeechEvaluationProvider {
@@ -43,7 +43,7 @@ export class MockSpeechEvaluationProvider implements SpeechEvaluationProvider {
         word,
         score,
         status: statusFromScore(score),
-        suggestion: score < 70 ? "建议单独慢速跟读该词。" : score <= 85 ? "部分音节不稳定。" : undefined
+        suggestion: score < 70 ? "建议单独慢速跟读该词。" : score < 85 ? "部分音节不稳定。" : undefined
       };
     });
 

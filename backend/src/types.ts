@@ -27,6 +27,8 @@ export interface TtsProvider {
     audioUrl: string;
     durationMs: number;
     provider: string;
+    message?: string;
+    errorCode?: string;
     raw?: unknown;
   }>;
 }
@@ -47,6 +49,8 @@ export interface SpeechEvaluationProvider {
       evaluationMs: number;
       totalMs: number;
     };
+    message?: string;
+    errorCode?: string;
     raw?: unknown;
   }>;
 }
@@ -64,4 +68,10 @@ export interface EvaluationLog {
     evaluationMs: number;
     totalMs: number;
   };
+  originalAudioMimeType?: string;
+  convertedAudioFormat?: string;
+  convertedAudioPath?: string;
+  xfyunSid?: string;
+  xfyunCode?: number;
+  errorMessage?: string;
 }
