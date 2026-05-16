@@ -7,10 +7,26 @@ dotenv.config({ path: path.resolve(process.cwd(), "..", ".env"), override: false
 
 const providerValues = ["mock", "xfyun", "tencent", "youdao"] as const;
 type ProviderValue = (typeof providerValues)[number];
+const feedbackTtsProviderValues = ["mock", "xfyun"] as const;
+type FeedbackTtsProviderValue = (typeof feedbackTtsProviderValues)[number];
 
 function normalizeProvider(value: string | undefined): ProviderValue {
   return providerValues.includes(value as ProviderValue) ? (value as ProviderValue) : "mock";
 }
+
+function normalizeFeedbackTtsProvider(value: string | undefined): FeedbackTtsProviderValue {
+  return feedbackTtsProviderValues.includes(value as FeedbackTtsProviderValue) ? (value as FeedbackTtsProviderValue) : "mock";
+}
+
+function normalizeBoolean(value: string | undefined, defaultValue: boolean) {
+  if (value === undefined) return defaultValue;
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}
+
+function normalizeFeedbackSpeed(value: string | undefined): "normal" | "slow" {
+  return value === "slow" ? "slow" : "normal";
+}
+
 
 export const config = {
   port: Number(process.env.PORT || 3001),
@@ -19,6 +35,20 @@ export const config = {
   evaluationProvider: normalizeProvider(process.env.EVALUATION_PROVIDER),
   uploadDir: process.env.UPLOAD_DIR || "./uploads",
   staticDir: process.env.STATIC_DIR || "./static",
+  feedback: {
+    enabled: normalizeBoolean(process.env.ENABLE_VOICE_FEEDBACK, true),
+    ttsProvider: normalizeFeedbackTtsProvider(process.env.FEEDBACK_TTS_PROVIDER || process.env.TTS_PROVIDER),
+    language: "zh" as const,
+    voice: process.env.FEEDBACK_VOICE || "xiaoyan",
+    speed: normalizeFeedbackSpeed(process.env.FEEDBACK_SPEED),
+    xfyun: {
+      appId: process.env.XFYUN_TTS_APP_ID || "",
+      apiKey: process.env.XFYUN_TTS_API_KEY || "",
+      apiSecret: process.env.XFYUN_TTS_API_SECRET || "",
+      endpoint: process.env.XFYUN_TTS_ENDPOINT || "wss://tts-api.xfyun.cn/v2/tts",
+      timeoutMs: Number(process.env.XFYUN_TTS_TIMEOUT_MS || 25000)
+    }
+  },
   xfyun: {
     iseEndpoint: process.env.XFYUN_ISE_ENDPOINT || "wss://ise-api.xfyun.cn/v2/open-ise",
     language: process.env.XFYUN_ISE_LANGUAGE || "en",

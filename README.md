@@ -330,3 +330,75 @@ configId 页面配置 > .env 配置 > mock 默认模式
 - 需要补充用户身份、任务 ID、绘本 ID 等业务字段时，再引入数据库，不建议在 Demo 阶段提前复杂化。
 - 小程序正式上线前要处理麦克风授权提示、儿童隐私合规、日志脱敏、音频文件生命周期和 CDN/对象存储。
 - 正式业务中建议将 Mock 模式仅用于测试环境，生产环境明确配置真实 Provider 和错误告警。
+
+## 中文语音反馈功能
+
+评测完成后，后端会基于总分、准确度、流利度、完整度、清晰度以及单词级错词结果，用规则模板生成一段适合儿童理解的中文反馈。返回的 `/api/evaluate` 响应会新增 `feedback` 字段，并在 `timing.feedbackTtsMs` 中记录本次中文反馈 TTS 耗时。
+
+### Mock TTS 如何使用
+
+默认配置为 Mock 模式，不需要任何真实第三方密钥：
+
+```env
+ENABLE_VOICE_FEEDBACK=true
+FEEDBACK_TTS_PROVIDER=mock
+FEEDBACK_LANGUAGE=zh
+FEEDBACK_VOICE=xiaoyan
+FEEDBACK_SPEED=normal
+```
+
+Mock Provider 会优先返回 `/static/mock/feedback-zh.mp3` 作为占位音频；如果当前环境无法创建占位音频，也会返回文字反馈并保持 `audioUrl` 为空，不会导致 Demo 报错。
+
+### 讯飞 TTS 如何配置
+
+如需使用科大讯飞在线语音合成，将反馈 TTS Provider 切换为 `xfyun` 并配置密钥：
+
+```env
+ENABLE_VOICE_FEEDBACK=true
+FEEDBACK_TTS_PROVIDER=xfyun
+FEEDBACK_LANGUAGE=zh
+FEEDBACK_VOICE=xiaoyan
+FEEDBACK_SPEED=normal
+
+XFYUN_TTS_APP_ID=your_app_id
+XFYUN_TTS_API_KEY=your_api_key
+XFYUN_TTS_API_SECRET=your_api_secret
+XFYUN_TTS_ENDPOINT=wss://tts-api.xfyun.cn/v2/tts
+```
+
+如果 `XFYUN_TTS_APP_ID`、`XFYUN_TTS_API_KEY`、`XFYUN_TTS_API_SECRET` 留空，后端会尝试复用已有的 `XFYUN_APP_ID`、`XFYUN_API_KEY`、`XFYUN_API_SECRET`。生成的中文语音会保存到 `backend/static/feedback/`，前端通过类似 `/static/feedback/feedback_xxx.mp3` 的地址播放。
+
+### 如何开启 / 关闭语音反馈
+
+- 开启：`ENABLE_VOICE_FEEDBACK=true`
+- 关闭：`ENABLE_VOICE_FEEDBACK=false`
+
+关闭后，系统仍然会返回中文文字反馈，但不会调用 TTS，`feedback.audioUrl` 会为空。
+
+### TTS 失败为什么不影响评测结果
+
+中文语音反馈属于评测后的增强能力。后端会先完成语音评测和中文反馈文案生成，再尝试调用 TTS。若 TTS 调用失败，`/api/evaluate` 仍返回原有评分、ASR、单词级结果和文字反馈，只在 `feedback.errorMessage` 中展示语音生成失败原因。
+
+### 浏览器为什么需要用户点击播放
+
+现代浏览器通常会限制自动播放音频。前端不会强制自动播放中文反馈，而是在评测结果区展示“播放语音反馈”按钮和 `<audio controls>` 播放器，由用户点击后播放。
+
+### 页面运行时配置
+
+页面的 API 配置面板支持配置中文语音反馈：
+
+- `ENABLE_VOICE_FEEDBACK`
+- `FEEDBACK_TTS_PROVIDER`：`mock` / `xfyun`
+- `XFYUN_TTS_APP_ID`
+- `XFYUN_TTS_API_KEY`
+- `XFYUN_TTS_API_SECRET`
+- `FEEDBACK_VOICE`
+- `FEEDBACK_SPEED`：`normal` / `slow`
+
+TTS API Secret 仅随保存/测试请求发送，保存后前端会清空输入框，不写入 localStorage，也不会在评测结果区完整回显。
+
+### 安全注意事项
+
+- 不要在 README、日志或前端展示区填写真实 API Key / API Secret。
+- 后端日志只记录反馈文案、Provider、音频地址、耗时和错误信息，不记录任何 TTS 密钥。
+- 生产环境建议通过服务端环境变量注入讯飞 TTS 配置。

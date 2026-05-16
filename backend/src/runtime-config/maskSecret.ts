@@ -19,6 +19,18 @@ export function maskRuntimeEvaluationConfig(config: RuntimeEvaluationConfig) {
       endpoint: config.xfyun.endpoint,
       language: config.xfyun.language,
       category: config.xfyun.category
+    } : undefined,
+    feedback: config.feedback ? {
+      enabled: config.feedback.enabled,
+      provider: config.feedback.provider,
+      voice: config.feedback.voice,
+      speed: config.feedback.speed,
+      xfyun: config.feedback.xfyun ? {
+        appId: maskValue(config.feedback.xfyun.appId),
+        apiKey: maskValue(config.feedback.xfyun.apiKey),
+        apiSecret: config.feedback.xfyun.apiSecret ? "configured" : "missing",
+        endpoint: config.feedback.xfyun.endpoint
+      } : undefined
     } : undefined
   };
 }

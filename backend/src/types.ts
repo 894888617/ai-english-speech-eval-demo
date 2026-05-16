@@ -33,6 +33,17 @@ export interface TtsProvider {
   }>;
 }
 
+export interface FeedbackResult {
+  text: string;
+  language: "zh";
+  audioUrl: string;
+  provider: "mock" | "xfyun";
+  durationMs: number;
+  ttsMs: number;
+  errorMessage: string;
+}
+
+
 export interface SpeechEvaluationProvider {
   name: ProviderName;
   evaluate(input: {
@@ -66,8 +77,15 @@ export interface EvaluationLog {
   timing: {
     uploadMs: number;
     evaluationMs: number;
+    feedbackTtsMs?: number;
     totalMs: number;
   };
+  feedbackText?: string;
+  feedbackLanguage?: "zh";
+  feedbackAudioUrl?: string;
+  feedbackTtsProvider?: "mock" | "xfyun";
+  feedbackTtsMs?: number;
+  feedbackTtsError?: string;
   originalAudioMimeType?: string;
   convertedAudioFormat?: string;
   convertedAudioPath?: string;

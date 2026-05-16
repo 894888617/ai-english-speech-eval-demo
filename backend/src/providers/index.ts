@@ -2,9 +2,20 @@ import { config } from "../config.js";
 import { RuntimeEvaluationConfig } from "../runtime-config/RuntimeEvaluationConfigStore.js";
 import { ProviderName, SpeechEvaluationProvider, TtsProvider } from "../types.js";
 import { MockSpeechEvaluationProvider } from "./speech-evaluation/MockSpeechEvaluationProvider.js";
-import { XfyunSpeechEvaluationProvider } from "./speech-evaluation/XfyunSpeechEvaluationProvider.js";
+// import { XfyunSpeechEvaluationProvider } from "./speech-evaluation/XfyunSpeechEvaluationProvider.js";
 import { MockTtsProvider } from "./mockTtsProvider.js";
 import { TencentTtsProvider, YoudaoTtsProvider } from "./placeholderProviders.js";
+
+class LazyXfyunSpeechEvaluationProvider implements SpeechEvaluationProvider {
+  name = "xfyun" as const;
+  constructor(private readonly options?: { runtimeConfig?: RuntimeEvaluationConfig }) {}
+
+  async evaluate(input: Parameters<SpeechEvaluationProvider["evaluate"]>[0]) {
+    const { XfyunSpeechEvaluationProvider } = await import("./speech-evaluation/XfyunSpeechEvaluationProvider.js");
+    return new XfyunSpeechEvaluationProvider(this.options).evaluate(input);
+  }
+}
+
 
 function hasTtsCredentials(provider: ProviderName) {
   if (provider === "tencent") return Boolean(config.credentials.tencent.secretId && config.credentials.tencent.secretKey);
@@ -20,8 +31,8 @@ export function createTtsProvider(): TtsProvider {
 
 export function createEvaluationProvider(options?: { runtimeConfig?: RuntimeEvaluationConfig }): SpeechEvaluationProvider {
   if (options?.runtimeConfig?.provider === "mock") return new MockSpeechEvaluationProvider();
-  if (options?.runtimeConfig?.provider === "xfyun") return new XfyunSpeechEvaluationProvider({ runtimeConfig: options.runtimeConfig });
-  if (config.evaluationProvider === "xfyun") return new XfyunSpeechEvaluationProvider();
+  if (options?.runtimeConfig?.provider === "xfyun") return new LazyXfyunSpeechEvaluationProvider({ runtimeConfig: options.runtimeConfig });
+  if (config.evaluationProvider === "xfyun") return new LazyXfyunSpeechEvaluationProvider();
   return new MockSpeechEvaluationProvider();
 }
 

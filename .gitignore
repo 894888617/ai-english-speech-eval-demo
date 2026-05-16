@@ -11,3 +11,6 @@ backend/static/tts
 backend/data/evaluation-logs.json
 .DS_Store
 *.log
+.idea
+*.json
+

@@ -5,8 +5,10 @@ import multer from "multer";
 import path from "node:path";
 import { nanoid } from "nanoid";
 import { config, resolveAppPath } from "./config.js";
+import { buildChineseFeedback } from "./feedback/feedbackBuilder.js";
 import { demoSentences } from "./demoSentences.js";
 import { createEvaluationProvider, evaluationProvider, runtimeMode, ttsProvider } from "./providers/index.js";
+import { createFeedbackTtsProvider } from "./providers/tts/ttsProviderFactory.js";
 import { runtimeConfigRoutes } from "./runtime-config/runtimeConfigRoutes.js";
 import { runtimeEvaluationConfigStore } from "./runtime-config/RuntimeEvaluationConfigStore.js";
 import { appendEvaluationLog, readEvaluationLogs } from "./services/logStore.js";
@@ -15,6 +17,8 @@ const uploadRoot = resolveAppPath(config.uploadDir);
 const staticRoot = resolveAppPath(config.staticDir);
 await fs.mkdir(uploadRoot, { recursive: true });
 await fs.mkdir(staticRoot, { recursive: true });
+await fs.mkdir(path.join(staticRoot, "feedback"), { recursive: true });
+await fs.mkdir(path.join(staticRoot, "mock"), { recursive: true });
 
 const upload = multer({
   dest: uploadRoot,
@@ -38,6 +42,7 @@ app.get("/api/health", (_req, res) => {
     mode: runtimeMode(),
     providers: {
       tts: ttsProvider.name,
+      feedbackTts: config.feedback.ttsProvider,
       evaluation: evaluationProvider.name
     }
   });
@@ -78,6 +83,43 @@ app.post("/api/evaluate", upload.single("audio"), async (req, res, next) => {
       audioPath: req.file.path,
       audioMimeType: req.file.mimetype || "application/octet-stream"
     });
+    const feedbackBase = buildChineseFeedback({
+      scores: result.scores,
+      wordScores: result.wordScores,
+      suggestions: result.suggestions,
+      targetText: text
+    });
+
+    const runtimeFeedbackConfig = runtimeConfig?.feedback;
+    const feedbackEnabled = runtimeFeedbackConfig?.enabled ?? config.feedback.enabled;
+    const requestedFeedbackProvider = runtimeFeedbackConfig?.provider || config.feedback.ttsProvider;
+    let feedbackAudio: { audioUrl: string; durationMs: number; provider: "mock" | "xfyun"; errorMessage?: string } | undefined;
+    let feedbackTtsMs = 0;
+
+    if (feedbackEnabled) {
+      const feedbackTtsStartedAt = Date.now();
+      try {
+        const activeFeedbackTtsProvider = createFeedbackTtsProvider({ runtimeConfig: runtimeFeedbackConfig });
+        const ttsResult = await activeFeedbackTtsProvider.synthesize({
+          text: feedbackBase.text,
+          language: feedbackBase.language,
+          speed: runtimeFeedbackConfig?.speed || config.feedback.speed,
+          voice: runtimeFeedbackConfig?.voice || config.feedback.voice
+        });
+        feedbackTtsMs = Date.now() - feedbackTtsStartedAt;
+        feedbackAudio = { audioUrl: ttsResult.audioUrl, durationMs: ttsResult.durationMs, provider: ttsResult.provider };
+      } catch (error) {
+        feedbackTtsMs = Date.now() - feedbackTtsStartedAt;
+        feedbackAudio = {
+          audioUrl: "",
+          durationMs: 0,
+          provider: requestedFeedbackProvider,
+          errorMessage: error instanceof Error ? error.message : "TTS generation failed"
+        };
+      }
+    } else {
+      feedbackAudio = { audioUrl: "", durationMs: 0, provider: requestedFeedbackProvider, errorMessage: "" };
+    }
     const totalMs = Date.now() - requestStartedAt;
     const rawRecord = result.raw && typeof result.raw === "object" ? (result.raw as Record<string, unknown>) : {};
     const conversion = rawRecord.conversion && typeof rawRecord.conversion === "object" ? rawRecord.conversion as Record<string, unknown> : {};
@@ -89,9 +131,19 @@ app.post("/api/evaluate", upload.single("audio"), async (req, res, next) => {
       convertedAudioPath: typeof conversion.convertedAudioPath === "string" ? path.relative(process.cwd(), conversion.convertedAudioPath) : undefined,
       xfyunSid: typeof rawRecord.sid === "string" ? rawRecord.sid : undefined,
       xfyunCode: typeof rawRecord.code === "number" ? rawRecord.code : undefined,
+      feedback: {
+        text: feedbackBase.text,
+        language: feedbackBase.language,
+        audioUrl: feedbackAudio?.audioUrl || "",
+        provider: feedbackAudio?.provider || requestedFeedbackProvider,
+        durationMs: feedbackAudio?.durationMs || 0,
+        ttsMs: feedbackTtsMs,
+        errorMessage: feedbackAudio?.errorMessage || ""
+      },
       timing: {
         uploadMs,
         evaluationMs: result.timing.evaluationMs,
+        feedbackTtsMs,
         totalMs
       }
     };
@@ -110,6 +162,12 @@ app.post("/api/evaluate", upload.single("audio"), async (req, res, next) => {
       xfyunSid: response.xfyunSid,
       xfyunCode: response.xfyunCode,
       errorMessage: response.status === "failed" ? response.message || response.suggestions?.[0] : undefined,
+      feedbackText: response.feedback.text,
+      feedbackLanguage: response.feedback.language,
+      feedbackAudioUrl: response.feedback.audioUrl,
+      feedbackTtsProvider: response.feedback.provider,
+      feedbackTtsMs: response.feedback.ttsMs,
+      feedbackTtsError: response.feedback.errorMessage,
       timing: response.timing
     });
 

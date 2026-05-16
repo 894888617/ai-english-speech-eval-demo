@@ -6,11 +6,13 @@ type Status = "待录音" | "录音中" | "待提交" | "评测中" | "评测完
 type AudioSource = "浏览器录音" | "本地上传" | "未选择";
 type EvaluationProvider = "mock" | "xfyun";
 type XfyunCategory = "read_word" | "read_sentence" | "read_chapter";
+type FeedbackTtsProvider = "mock" | "xfyun";
+type FeedbackSpeed = "normal" | "slow";
 
 interface DemoSentence { id: string; text: string; level: string; }
 interface ScoreSet { total: number; accuracy: number; fluency: number; integrity: number; clarity: number; }
 interface WordScore { word: string; score: number; status: "ok" | "warning" | "bad"; suggestion?: string; }
-interface RuntimeConfigForm { provider: EvaluationProvider; appId: string; apiKey: string; apiSecret: string; endpoint: string; language: string; category: XfyunCategory; }
+interface RuntimeConfigForm { provider: EvaluationProvider; appId: string; apiKey: string; apiSecret: string; endpoint: string; language: string; category: XfyunCategory; enableVoiceFeedback: boolean; feedbackProvider: FeedbackTtsProvider; feedbackAppId: string; feedbackApiKey: string; feedbackApiSecret: string; feedbackEndpoint: string; feedbackVoice: string; feedbackSpeed: FeedbackSpeed; }
 interface EvaluationResult {
   status: "complete" | "failed";
   provider: string;
@@ -18,7 +20,8 @@ interface EvaluationResult {
   asrText: string;
   wordScores: WordScore[];
   suggestions: string[];
-  timing: { uploadMs: number; evaluationMs: number; totalMs: number; };
+  feedback?: { text: string; language: "zh"; audioUrl: string; provider: FeedbackTtsProvider; durationMs: number; ttsMs: number; errorMessage: string; };
+  timing: { uploadMs: number; evaluationMs: number; feedbackTtsMs?: number; totalMs: number; };
   message?: string;
   errorCode?: string;
   originalAudioMimeType?: string;
@@ -37,7 +40,15 @@ const defaultRuntimeConfigForm: RuntimeConfigForm = {
   apiSecret: "",
   endpoint: "",
   language: "en_us",
-  category: "read_sentence"
+  category: "read_sentence",
+  enableVoiceFeedback: true,
+  feedbackProvider: "mock",
+  feedbackAppId: "",
+  feedbackApiKey: "",
+  feedbackApiSecret: "",
+  feedbackEndpoint: "",
+  feedbackVoice: "xiaoyan",
+  feedbackSpeed: "normal"
 };
 
 function scoreClass(score: number) {
@@ -73,6 +84,8 @@ function App() {
   const [savedProvider, setSavedProvider] = useState<EvaluationProvider | "env/default">("env/default");
   const [configSaved, setConfigSaved] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
+  const [showFeedbackSecret, setShowFeedbackSecret] = useState(false);
+  const feedbackAudioRef = useRef<HTMLAudioElement | null>(null);
   const [configMessage, setConfigMessage] = useState("");
   const [configError, setConfigError] = useState("");
   const [configBusy, setConfigBusy] = useState(false);
@@ -172,7 +185,19 @@ function App() {
 
 
   function runtimeConfigPayload(form: RuntimeConfigForm) {
-    if (form.provider === "mock") return { provider: "mock" };
+    const feedback = {
+      enabled: form.enableVoiceFeedback,
+      provider: form.feedbackProvider,
+      voice: form.feedbackVoice.trim() || "xiaoyan",
+      speed: form.feedbackSpeed,
+      xfyun: form.feedbackProvider === "xfyun" ? {
+        appId: form.feedbackAppId.trim(),
+        apiKey: form.feedbackApiKey.trim(),
+        apiSecret: form.feedbackApiSecret,
+        endpoint: form.feedbackEndpoint.trim()
+      } : undefined
+    };
+    if (form.provider === "mock") return { provider: "mock", feedback };
     return {
       provider: "xfyun",
       xfyun: {
@@ -182,7 +207,8 @@ function App() {
         endpoint: form.endpoint.trim(),
         language: form.language.trim() || "en_us",
         category: form.category
-      }
+      },
+      feedback
     };
   }
 
@@ -203,7 +229,7 @@ function App() {
       setSavedProvider(data.provider);
       setConfigSaved(true);
       setConfigMessage(`配置已保存：${data.provider}（configId: ${data.configId}）`);
-      if (data.provider === "xfyun") setRuntimeConfigForm((value) => ({ ...value, apiSecret: "" }));
+      setRuntimeConfigForm((value) => ({ ...value, apiSecret: "", feedbackApiSecret: "" }));
     } catch (error) {
       setConfigSaved(false);
       setConfigError(error instanceof Error ? error.message : "保存配置失败");
@@ -298,6 +324,11 @@ function App() {
     setTtsMs(null);
   }
 
+  function playFeedbackAudio() {
+    if (!result?.feedback?.audioUrl) return;
+    void feedbackAudioRef.current?.play();
+  }
+
   return (
     <main className="page">
       <header className="hero">
@@ -359,6 +390,40 @@ function App() {
               </>
             )}
 
+            <h3 className="subsection-title">中文语音反馈配置</h3>
+            <label className="checkbox-row">
+              <input type="checkbox" checked={runtimeConfigForm.enableVoiceFeedback} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, enableVoiceFeedback: event.target.checked }))} />
+              <span>ENABLE_VOICE_FEEDBACK（默认开启）</span>
+            </label>
+            <label>FEEDBACK_TTS_PROVIDER</label>
+            <select value={runtimeConfigForm.feedbackProvider} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, feedbackProvider: event.target.value as FeedbackTtsProvider }))}>
+              <option value="mock">mock</option>
+              <option value="xfyun">xfyun</option>
+            </select>
+            <label>FEEDBACK_VOICE</label>
+            <input type="text" value={runtimeConfigForm.feedbackVoice} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, feedbackVoice: event.target.value }))} placeholder="xiaoyan" />
+            <label>FEEDBACK_SPEED</label>
+            <select value={runtimeConfigForm.feedbackSpeed} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, feedbackSpeed: event.target.value as FeedbackSpeed }))}>
+              <option value="normal">normal</option>
+              <option value="slow">slow</option>
+            </select>
+
+            {runtimeConfigForm.feedbackProvider === "xfyun" && (
+                <>
+                  <label>XFYUN_TTS_APP_ID</label>
+                  <input type="text" value={runtimeConfigForm.feedbackAppId} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, feedbackAppId: event.target.value }))} placeholder="可留空复用后端 XFYUN_APP_ID" />
+                  <label>XFYUN_TTS_API_KEY</label>
+                  <input type="text" value={runtimeConfigForm.feedbackApiKey} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, feedbackApiKey: event.target.value }))} placeholder="可留空复用后端 XFYUN_API_KEY" />
+                  <label>XFYUN_TTS_API_SECRET</label>
+                  <div className="secret-row">
+                    <input type={showFeedbackSecret ? "text" : "password"} value={runtimeConfigForm.feedbackApiSecret} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, feedbackApiSecret: event.target.value }))} placeholder={configSaved ? "已保存后清空；如需重存请重新输入" : "请输入 TTS API Secret"} />
+                    <button type="button" className="ghost" onClick={() => setShowFeedbackSecret((value) => !value)}>{showFeedbackSecret ? "隐藏" : "显示"}</button>
+                  </div>
+                  <label>XFYUN_TTS_ENDPOINT（可选）</label>
+                  <input type="text" value={runtimeConfigForm.feedbackEndpoint} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, feedbackEndpoint: event.target.value }))} placeholder="为空时使用后端默认 TTS endpoint" />
+                </>
+            )}
+
             <div className="button-grid api-buttons">
               <button onClick={() => void saveRuntimeConfig()} disabled={configBusy}>保存配置</button>
               <button onClick={() => void testRuntimeConfig()} disabled={configBusy}>测试配置</button>
@@ -411,6 +476,28 @@ function App() {
                 <div><span>评测耗时</span><strong>{result.timing.evaluationMs} ms</strong></div>
                 <div><span>总耗时</span><strong>{result.timing.totalMs} ms</strong></div>
               </div>
+              {result.feedback && (
+                  <section className="feedback-card">
+                    <div className="feedback-card__header">
+                      <h3>中文语音反馈</h3>
+                      <span className={result.feedback.errorMessage ? "status-pill warning-pill" : "status-pill ok-pill"}>{result.feedback.audioUrl ? "已生成语音" : "文字反馈可用"}</span>
+                    </div>
+                    <p className="feedback-text">{result.feedback.text}</p>
+                    <div className="feedback-meta">
+                      <div><span>TTS Provider</span><strong>{result.feedback.provider}</strong></div>
+                      <div><span>TTS 耗时</span><strong>{result.feedback.ttsMs ?? result.timing.feedbackTtsMs ?? 0} ms</strong></div>
+                      <div><span>音频时长</span><strong>{result.feedback.durationMs} ms</strong></div>
+                      <div><span>生成状态</span><strong>{result.feedback.audioUrl ? "成功" : "无音频"}</strong></div>
+                    </div>
+                    {result.feedback.audioUrl && (
+                        <div className="feedback-player">
+                          <button type="button" className="primary" onClick={playFeedbackAudio}>播放语音反馈</button>
+                          <audio ref={feedbackAudioRef} controls src={result.feedback.audioUrl} />
+                        </div>
+                    )}
+                    {result.feedback.errorMessage && <p className="feedback-error">语音反馈生成失败，但文字反馈可用：{result.feedback.errorMessage}</p>}
+                  </section>
+              )}
               <details className="debug-panel">
                 <summary>调试信息（不含密钥）</summary>
                 <div className="debug-grid">
