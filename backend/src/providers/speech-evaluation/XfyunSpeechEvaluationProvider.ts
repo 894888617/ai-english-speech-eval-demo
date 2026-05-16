@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import WebSocket from "ws";
 import { convertToXfyunPcm } from "../../audio/audioConverter.js";
 import { config } from "../../config.js";
+import { RuntimeEvaluationConfig } from "../../runtime-config/RuntimeEvaluationConfigStore.js";
 import { ScoreSet, SpeechEvaluationProvider, WordScore } from "../../types.js";
 import { createXfyunAuthUrl } from "./xfyunAuth.js";
 import { parseXfyunResult, XfyunRawMessage } from "./xfyunResultParser.js";
@@ -22,21 +23,46 @@ function failedResult(input: { message: string; errorCode: string; evaluationMs:
   };
 }
 
-function credentialsConfigured() {
-  return Boolean(config.credentials.xfyun.appId && config.credentials.xfyun.apiKey && config.credentials.xfyun.apiSecret);
+type XfyunEvaluationOptions = {
+  appId?: string;
+  apiKey?: string;
+  apiSecret?: string;
+  endpoint?: string;
+  language?: string;
+  category?: "read_word" | "read_sentence" | "read_chapter" | string;
+};
+
+function resolveXfyunOptions(runtimeConfig?: RuntimeEvaluationConfig): Required<Pick<XfyunEvaluationOptions, "appId" | "apiKey" | "apiSecret" | "endpoint" | "language" | "category">> {
+  return {
+    appId: runtimeConfig?.xfyun?.appId || config.credentials.xfyun.appId,
+    apiKey: runtimeConfig?.xfyun?.apiKey || config.credentials.xfyun.apiKey,
+    apiSecret: runtimeConfig?.xfyun?.apiSecret || config.credentials.xfyun.apiSecret,
+    endpoint: runtimeConfig?.xfyun?.endpoint || config.xfyun.iseEndpoint,
+    language: runtimeConfig?.xfyun?.language || config.xfyun.language,
+    category: runtimeConfig?.xfyun?.category || config.xfyun.category
+  };
 }
 
-function xfyunText(text: string) {
+function credentialsConfigured(options: XfyunEvaluationOptions) {
+  return Boolean(options.appId && options.apiKey && options.apiSecret);
+}
+
+function xfyunText(text: string, language: string) {
   const normalized = text.replace(/\s+/g, " ").trim();
-  return config.xfyun.language === "en" ? `[content]${normalized}` : `\uFEFF${normalized}`;
+  return language === "en" || language === "en_us" ? `[content]${normalized}` : `\uFEFF${normalized}`;
 }
 
 export class XfyunSpeechEvaluationProvider implements SpeechEvaluationProvider {
   name = "xfyun" as const;
+  private readonly options: ReturnType<typeof resolveXfyunOptions>;
+
+  constructor(options?: { runtimeConfig?: RuntimeEvaluationConfig }) {
+    this.options = resolveXfyunOptions(options?.runtimeConfig);
+  }
 
   async evaluate(input: { text: string; audioPath: string; audioMimeType: string }) {
     const startedAt = Date.now();
-    if (!credentialsConfigured()) {
+    if (!credentialsConfigured(this.options)) {
       return failedResult({ message: "XFYUN credentials are not configured", errorCode: "XFYUN_CREDENTIALS_MISSING", evaluationMs: Date.now() - startedAt });
     }
 
@@ -49,7 +75,7 @@ export class XfyunSpeechEvaluationProvider implements SpeechEvaluationProvider {
     }
 
     try {
-      const authUrl = createXfyunAuthUrl(config.xfyun.iseEndpoint, config.credentials.xfyun.apiKey, config.credentials.xfyun.apiSecret);
+      const authUrl = createXfyunAuthUrl(this.options.endpoint, this.options.apiKey, this.options.apiSecret);
       const messages = await this.callWebSocket(authUrl, input.text, conversion.convertedAudioPath);
       const evaluationMs = Date.now() - startedAt;
       return await parseXfyunResult({ messages, text: input.text, evaluationMs, totalMs: evaluationMs, conversion });
@@ -85,13 +111,13 @@ export class XfyunSpeechEvaluationProvider implements SpeechEvaluationProvider {
 
       ws.on("open", () => {
         ws.send(JSON.stringify({
-          common: { app_id: config.credentials.xfyun.appId },
+          common: { app_id: this.options.appId },
           business: {
             sub: "ise",
-            ent: config.xfyun.language === "en" ? "en_vip" : "cn_vip",
-            category: config.xfyun.category,
+            ent: this.options.language === "en" || this.options.language === "en_us" ? "en_vip" : "cn_vip",
+            category: this.options.category,
             cmd: "ssb",
-            text: xfyunText(text),
+            text: xfyunText(text, this.options.language),
             tte: "utf-8",
             ttp_skip: true,
             aue: "raw",

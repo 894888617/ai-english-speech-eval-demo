@@ -1,4 +1,5 @@
 import { config } from "../config.js";
+import { RuntimeEvaluationConfig } from "../runtime-config/RuntimeEvaluationConfigStore.js";
 import { ProviderName, SpeechEvaluationProvider, TtsProvider } from "../types.js";
 import { MockSpeechEvaluationProvider } from "./speech-evaluation/MockSpeechEvaluationProvider.js";
 import { XfyunSpeechEvaluationProvider } from "./speech-evaluation/XfyunSpeechEvaluationProvider.js";
@@ -17,7 +18,9 @@ export function createTtsProvider(): TtsProvider {
   return new MockTtsProvider();
 }
 
-export function createEvaluationProvider(): SpeechEvaluationProvider {
+export function createEvaluationProvider(options?: { runtimeConfig?: RuntimeEvaluationConfig }): SpeechEvaluationProvider {
+  if (options?.runtimeConfig?.provider === "mock") return new MockSpeechEvaluationProvider();
+  if (options?.runtimeConfig?.provider === "xfyun") return new XfyunSpeechEvaluationProvider({ runtimeConfig: options.runtimeConfig });
   if (config.evaluationProvider === "xfyun") return new XfyunSpeechEvaluationProvider();
   return new MockSpeechEvaluationProvider();
 }

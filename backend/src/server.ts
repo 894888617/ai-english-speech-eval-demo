@@ -6,7 +6,9 @@ import path from "node:path";
 import { nanoid } from "nanoid";
 import { config, resolveAppPath } from "./config.js";
 import { demoSentences } from "./demoSentences.js";
-import { evaluationProvider, runtimeMode, ttsProvider } from "./providers/index.js";
+import { createEvaluationProvider, evaluationProvider, runtimeMode, ttsProvider } from "./providers/index.js";
+import { runtimeConfigRoutes } from "./runtime-config/runtimeConfigRoutes.js";
+import { runtimeEvaluationConfigStore } from "./runtime-config/RuntimeEvaluationConfigStore.js";
 import { appendEvaluationLog, readEvaluationLogs } from "./services/logStore.js";
 
 const uploadRoot = resolveAppPath(config.uploadDir);
@@ -28,6 +30,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 app.use("/static", express.static(staticRoot));
+app.use("/api/runtime-config", runtimeConfigRoutes);
 
 app.get("/api/health", (_req, res) => {
   res.json({
@@ -65,8 +68,12 @@ app.post("/api/evaluate", upload.single("audio"), async (req, res, next) => {
     if (!text) return res.status(400).json({ message: "text 不能为空" });
     if (!req.file) return res.status(400).json({ message: "audio 文件不能为空" });
 
+    const configId = typeof req.body?.configId === "string" ? req.body.configId.trim() : "";
+    const runtimeConfig = configId ? runtimeEvaluationConfigStore.get(configId) : undefined;
+    const activeEvaluationProvider = createEvaluationProvider({ runtimeConfig });
+
     const uploadMs = Date.now() - requestStartedAt;
-    const result = await evaluationProvider.evaluate({
+    const result = await activeEvaluationProvider.evaluate({
       text,
       audioPath: req.file.path,
       audioMimeType: req.file.mimetype || "application/octet-stream"
@@ -76,7 +83,7 @@ app.post("/api/evaluate", upload.single("audio"), async (req, res, next) => {
     const conversion = rawRecord.conversion && typeof rawRecord.conversion === "object" ? rawRecord.conversion as Record<string, unknown> : {};
     const response = {
       ...result,
-      provider: evaluationProvider.name,
+      provider: activeEvaluationProvider.name,
       originalAudioMimeType: req.file.mimetype || "application/octet-stream",
       convertedAudioFormat: typeof conversion.convertedAudioFormat === "string" ? conversion.convertedAudioFormat : undefined,
       convertedAudioPath: typeof conversion.convertedAudioPath === "string" ? path.relative(process.cwd(), conversion.convertedAudioPath) : undefined,
@@ -93,7 +100,7 @@ app.post("/api/evaluate", upload.single("audio"), async (req, res, next) => {
       id: nanoid(10),
       text,
       source,
-      provider: evaluationProvider.name,
+      provider: activeEvaluationProvider.name,
       scores: response.scores,
       asrText: response.asrText,
       createdAt: new Date().toISOString(),

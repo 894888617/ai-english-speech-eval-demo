@@ -4,10 +4,13 @@ import "./styles.css";
 
 type Status = "待录音" | "录音中" | "待提交" | "评测中" | "评测完成" | "评测失败";
 type AudioSource = "浏览器录音" | "本地上传" | "未选择";
+type EvaluationProvider = "mock" | "xfyun";
+type XfyunCategory = "read_word" | "read_sentence" | "read_chapter";
 
 interface DemoSentence { id: string; text: string; level: string; }
 interface ScoreSet { total: number; accuracy: number; fluency: number; integrity: number; clarity: number; }
 interface WordScore { word: string; score: number; status: "ok" | "warning" | "bad"; suggestion?: string; }
+interface RuntimeConfigForm { provider: EvaluationProvider; appId: string; apiKey: string; apiSecret: string; endpoint: string; language: string; category: XfyunCategory; }
 interface EvaluationResult {
   status: "complete" | "failed";
   provider: string;
@@ -27,6 +30,15 @@ interface EvaluationResult {
 }
 
 const defaultText = `Hello.\nI see a little cat.\nThe rabbit is running fast.\nCan you see the yellow bird?`;
+const defaultRuntimeConfigForm: RuntimeConfigForm = {
+  provider: "mock",
+  appId: "",
+  apiKey: "",
+  apiSecret: "",
+  endpoint: "",
+  language: "en_us",
+  category: "read_sentence"
+};
 
 function scoreClass(score: number) {
   if (score < 70) return "bad";
@@ -56,6 +68,14 @@ function App() {
   const [ttsMs, setTtsMs] = useState<number | null>(null);
   const [result, setResult] = useState<EvaluationResult | null>(null);
   const [message, setMessage] = useState("");
+  const [runtimeConfigForm, setRuntimeConfigForm] = useState<RuntimeConfigForm>(defaultRuntimeConfigForm);
+  const [currentConfigId, setCurrentConfigId] = useState("");
+  const [savedProvider, setSavedProvider] = useState<EvaluationProvider | "env/default">("env/default");
+  const [configSaved, setConfigSaved] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
+  const [configMessage, setConfigMessage] = useState("");
+  const [configError, setConfigError] = useState("");
+  const [configBusy, setConfigBusy] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const timerRef = useRef<number | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -150,6 +170,95 @@ function App() {
     setMessage(`已选择音频：${file.name}`);
   }
 
+
+  function runtimeConfigPayload(form: RuntimeConfigForm) {
+    if (form.provider === "mock") return { provider: "mock" };
+    return {
+      provider: "xfyun",
+      xfyun: {
+        appId: form.appId.trim(),
+        apiKey: form.apiKey.trim(),
+        apiSecret: form.apiSecret,
+        endpoint: form.endpoint.trim(),
+        language: form.language.trim() || "en_us",
+        category: form.category
+      }
+    };
+  }
+
+  async function saveRuntimeConfig(override?: RuntimeConfigForm) {
+    const form = override || runtimeConfigForm;
+    setConfigBusy(true);
+    setConfigError("");
+    setConfigMessage("正在保存配置...");
+    try {
+      const response = await fetch("/api/runtime-config/evaluation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(runtimeConfigPayload(form))
+      });
+      const data = await response.json() as { ok: boolean; configId?: string; provider?: EvaluationProvider; message?: string };
+      if (!response.ok || !data.ok || !data.configId || !data.provider) throw new Error(data.message || "保存配置失败");
+      setCurrentConfigId(data.configId);
+      setSavedProvider(data.provider);
+      setConfigSaved(true);
+      setConfigMessage(`配置已保存：${data.provider}（configId: ${data.configId}）`);
+      if (data.provider === "xfyun") setRuntimeConfigForm((value) => ({ ...value, apiSecret: "" }));
+    } catch (error) {
+      setConfigSaved(false);
+      setConfigError(error instanceof Error ? error.message : "保存配置失败");
+      setConfigMessage("");
+    } finally {
+      setConfigBusy(false);
+    }
+  }
+
+  async function testRuntimeConfig() {
+    setConfigBusy(true);
+    setConfigError("");
+    setConfigMessage("正在测试配置...");
+    try {
+      const body = currentConfigId ? { configId: currentConfigId } : runtimeConfigPayload(runtimeConfigForm);
+      const response = await fetch("/api/runtime-config/evaluation/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const data = await response.json() as { ok: boolean; message?: string };
+      if (!response.ok || !data.ok) throw new Error(data.message || "测试配置失败");
+      setConfigMessage(data.message || "配置测试通过");
+    } catch (error) {
+      setConfigError(error instanceof Error ? error.message : "测试配置失败");
+      setConfigMessage("");
+    } finally {
+      setConfigBusy(false);
+    }
+  }
+
+  async function clearRuntimeConfig() {
+    const deletingConfigId = currentConfigId;
+    setConfigBusy(true);
+    setConfigError("");
+    try {
+      if (deletingConfigId) await fetch(`/api/runtime-config/evaluation/${encodeURIComponent(deletingConfigId)}`, { method: "DELETE" });
+      setCurrentConfigId("");
+      setConfigSaved(false);
+      setSavedProvider("env/default");
+      setRuntimeConfigForm(defaultRuntimeConfigForm);
+      setConfigMessage("页面配置已清空，后续评测将回到 .env 配置或默认 Mock。密钥未写入 localStorage。");
+    } catch (error) {
+      setConfigError(error instanceof Error ? error.message : "清空配置失败");
+    } finally {
+      setConfigBusy(false);
+    }
+  }
+
+  function useMockMode() {
+    const mockForm: RuntimeConfigForm = { ...defaultRuntimeConfigForm, provider: "mock" };
+    setRuntimeConfigForm(mockForm);
+    void saveRuntimeConfig(mockForm);
+  }
+
   async function submitEvaluation() {
     if (!activeText) return setMessage("请先输入英文测试句子。");
     if (!audioBlob) return setMessage("请先录音或上传音频。");
@@ -159,6 +268,7 @@ function App() {
     form.append("text", activeText);
     form.append("source", audioSource === "本地上传" ? "upload" : "browser");
     form.append("audio", audioBlob, audioSource === "本地上传" && audioBlob instanceof File ? audioBlob.name : "browser-recording.webm");
+    if (currentConfigId) form.append("configId", currentConfigId);
     try {
       const response = await fetch("/api/evaluate", { method: "POST", body: form });
       const data = await response.json() as EvaluationResult;
@@ -215,6 +325,57 @@ function App() {
             <button className="ghost" onClick={clearAll}>清空结果</button>
           </div>
 
+
+
+          <section className="api-config">
+            <h3>API 配置</h3>
+            <label>Evaluation Provider</label>
+            <select value={runtimeConfigForm.provider} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, provider: event.target.value as EvaluationProvider }))}>
+              <option value="mock">mock</option>
+              <option value="xfyun">xfyun</option>
+            </select>
+
+            {runtimeConfigForm.provider === "xfyun" && (
+              <>
+                <label>XFYUN AppID</label>
+                <input type="text" value={runtimeConfigForm.appId} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, appId: event.target.value }))} placeholder="请输入 AppID" />
+                <label>XFYUN API Key</label>
+                <input type="text" value={runtimeConfigForm.apiKey} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, apiKey: event.target.value }))} placeholder="请输入 API Key" />
+                <label>XFYUN API Secret</label>
+                <div className="secret-row">
+                  <input type={showSecret ? "text" : "password"} value={runtimeConfigForm.apiSecret} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, apiSecret: event.target.value }))} placeholder={configSaved ? "已保存后清空；如需重存请重新输入" : "请输入 API Secret"} />
+                  <button type="button" className="ghost" onClick={() => setShowSecret((value) => !value)}>{showSecret ? "隐藏" : "显示"}</button>
+                </div>
+                <label>Language</label>
+                <input type="text" value={runtimeConfigForm.language} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, language: event.target.value }))} placeholder="en_us" />
+                <label>Category</label>
+                <select value={runtimeConfigForm.category} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, category: event.target.value as XfyunCategory }))}>
+                  <option value="read_word">read_word</option>
+                  <option value="read_sentence">read_sentence</option>
+                  <option value="read_chapter">read_chapter</option>
+                </select>
+                <label>Endpoint（可选）</label>
+                <input type="text" value={runtimeConfigForm.endpoint} onChange={(event) => setRuntimeConfigForm((value) => ({ ...value, endpoint: event.target.value }))} placeholder="为空时使用后端默认 endpoint" />
+              </>
+            )}
+
+            <div className="button-grid api-buttons">
+              <button onClick={() => void saveRuntimeConfig()} disabled={configBusy}>保存配置</button>
+              <button onClick={() => void testRuntimeConfig()} disabled={configBusy}>测试配置</button>
+              <button className="ghost" onClick={() => void clearRuntimeConfig()} disabled={configBusy}>清空配置</button>
+              <button className="primary" onClick={useMockMode} disabled={configBusy}>使用 Mock 模式</button>
+            </div>
+
+            <div className="config-status-grid">
+              <div><span>当前 Provider</span><strong>{savedProvider}</strong></div>
+              <div><span>配置是否已保存</span><strong>{configSaved ? "已保存" : "未保存"}</strong></div>
+              <div><span>configId</span><strong>{currentConfigId || "-"}</strong></div>
+              <div><span>测试连接结果</span><strong>{configMessage || "-"}</strong></div>
+              <div><span>错误信息</span><strong>{configError || "-"}</strong></div>
+            </div>
+            <p className="secret-note">安全提示：API Secret 仅随保存/测试请求发送，保存后前端会清空输入框；本页面不会写入 localStorage，也不会在结果区展示 Secret。</p>
+          </section>
+
           <div className="status-grid">
             <div><span>音频来源</span><strong>{audioSource}</strong></div>
             <div><span>录音时长</span><strong>{recordingSeconds}s</strong></div>
@@ -258,6 +419,7 @@ function App() {
                   <div><span>xfyun response code</span><strong>{result.xfyunCode ?? "-"}</strong></div>
                   <div><span>xfyun sid</span><strong>{result.xfyunSid || "-"}</strong></div>
                   <div><span>errorCode</span><strong>{result.errorCode || "-"}</strong></div>
+                  <div><span>configId</span><strong>{currentConfigId || "-"}</strong></div>
                 </div>
                 <pre>{JSON.stringify(result.raw, null, 2)?.slice(0, 2500) || "无 raw result"}</pre>
               </details>
