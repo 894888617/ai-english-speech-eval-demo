@@ -19,6 +19,13 @@ export const config = {
   evaluationProvider: normalizeProvider(process.env.EVALUATION_PROVIDER),
   uploadDir: process.env.UPLOAD_DIR || "./uploads",
   staticDir: process.env.STATIC_DIR || "./static",
+  xfyun: {
+    iseEndpoint: process.env.XFYUN_ISE_ENDPOINT || "wss://ise-api.xfyun.cn/v2/open-ise",
+    language: process.env.XFYUN_ISE_LANGUAGE || "en",
+    category: process.env.XFYUN_ISE_CATEGORY || "read_sentence",
+    audioRate: Number(process.env.XFYUN_ISE_AUDIO_RATE || 16000),
+    timeoutMs: Number(process.env.XFYUN_ISE_TIMEOUT_MS || 25000)
+  },
   credentials: {
     xfyun: {
       appId: process.env.XFYUN_APP_ID || "",

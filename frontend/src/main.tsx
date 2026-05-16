@@ -16,6 +16,14 @@ interface EvaluationResult {
   wordScores: WordScore[];
   suggestions: string[];
   timing: { uploadMs: number; evaluationMs: number; totalMs: number; };
+  message?: string;
+  errorCode?: string;
+  originalAudioMimeType?: string;
+  convertedAudioFormat?: string;
+  convertedAudioPath?: string;
+  xfyunSid?: string;
+  xfyunCode?: number;
+  raw?: unknown;
 }
 
 const defaultText = `Hello.\nI see a little cat.\nThe rabbit is running fast.\nCan you see the yellow bird?`;
@@ -153,11 +161,16 @@ function App() {
     form.append("audio", audioBlob, audioSource === "本地上传" && audioBlob instanceof File ? audioBlob.name : "browser-recording.webm");
     try {
       const response = await fetch("/api/evaluate", { method: "POST", body: form });
-      if (!response.ok) throw new Error((await response.json()).message || "评测失败");
       const data = await response.json() as EvaluationResult;
+      if (!response.ok) throw new Error(data.message || "评测失败");
       setResult(data);
-      setStatus("评测完成");
-      setMessage("评测完成，可查看右侧结果。");
+      if (data.status === "failed") {
+        setStatus("评测失败");
+        setMessage(data.message || data.suggestions?.[0] || "评测失败");
+      } else {
+        setStatus("评测完成");
+        setMessage("评测完成，可查看右侧结果。");
+      }
     } catch (error) {
       setStatus("评测失败");
       setMessage(error instanceof Error ? error.message : "评测失败");
@@ -178,8 +191,8 @@ function App() {
   return (
     <main className="page">
       <header className="hero">
-        <div><p className="eyebrow">Speech Evaluation Mock Demo</p><h1>AI 英语跟读评测 Demo</h1><p>标准朗读、浏览器录音、本地上传、AI 评分、ASR 转写与错词建议一页完成。</p></div>
-        <span className="badge">Mock 可离线演示</span>
+        <div><p className="eyebrow">Speech Evaluation Demo</p><h1>AI 英语跟读评测 Demo</h1><p>标准朗读、浏览器录音、本地上传、AI 评分、ASR 转写与错词建议一页完成。</p></div>
+        <span className="badge">Mock / 讯飞双模式</span>
       </header>
 
       <section className="layout">
@@ -229,16 +242,31 @@ function App() {
               <div className="info-grid">
                 <div><span>ASR 转写文本</span><strong>{result.asrText}</strong></div>
                 <div><span>评测状态</span><strong>{status}</strong></div>
+                <div><span>Provider</span><strong>{result.provider}</strong></div>
+                <div><span>转换前格式</span><strong>{result.originalAudioMimeType || "-"}</strong></div>
+                <div><span>转换后格式</span><strong>{result.convertedAudioFormat || "-"}</strong></div>
                 <div><span>TTS 耗时</span><strong>{ttsMs ?? 0} ms</strong></div>
                 <div><span>上传耗时</span><strong>{result.timing.uploadMs} ms</strong></div>
                 <div><span>评测耗时</span><strong>{result.timing.evaluationMs} ms</strong></div>
                 <div><span>总耗时</span><strong>{result.timing.totalMs} ms</strong></div>
               </div>
+              <details className="debug-panel">
+                <summary>调试信息（不含密钥）</summary>
+                <div className="debug-grid">
+                  <div><span>provider</span><strong>{result.provider}</strong></div>
+                  <div><span>convertedAudioPath</span><strong>{result.convertedAudioPath || "-"}</strong></div>
+                  <div><span>xfyun response code</span><strong>{result.xfyunCode ?? "-"}</strong></div>
+                  <div><span>xfyun sid</span><strong>{result.xfyunSid || "-"}</strong></div>
+                  <div><span>errorCode</span><strong>{result.errorCode || "-"}</strong></div>
+                </div>
+                <pre>{JSON.stringify(result.raw, null, 2)?.slice(0, 2500) || "无 raw result"}</pre>
+              </details>
               <h3>纠错建议</h3>
               <ul className="suggestions">{result.suggestions.map((item) => <li key={item}>{item}</li>)}</ul>
               <h3>单词级结果</h3>
               <div className="word-table">
                 <div className="word-head"><span>word</span><span>score</span><span>status</span></div>
+                {result.wordScores.length === 0 && <div className="word-row"><span>暂无单词级明细</span><strong>-</strong><em>-</em></div>}
                 {result.wordScores.map((item, index) => <div className={`word-row ${scoreClass(item.score)}`} key={`${item.word}-${index}`}><span>{item.word}</span><strong>{item.score.toFixed(1)}</strong><em>{item.status}</em></div>)}
               </div>
             </>
