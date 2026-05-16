@@ -208,11 +208,65 @@ EVALUATION_PROVIDER=mock
 
 重启后端即可。Mock Provider 不依赖任何讯飞配置。
 
-## 7. 后端接口
+
+## 7. 页面配置讯飞 API 参数
+
+页面左侧“API 配置”面板用于 Demo 测试人员在不修改 `.env`、不重启后端的情况下，临时切换 `mock` / `xfyun` 并填写科大讯飞语音评测参数。该能力只使用后端内存保存配置，服务重启后会丢失，适合联调和验收，不建议直接用于生产环境。
+
+### 7.1 如何填写 AppID / APIKey / APISecret
+
+1. 在“Evaluation Provider”下拉框选择 `xfyun`。
+2. 填写同一个讯飞开放平台应用下的 `XFYUN AppID`、`XFYUN API Key`、`XFYUN API Secret`。
+3. `Language` 默认 `en_us`。
+4. `Category` 默认 `read_sentence`，也可选择 `read_word` 或 `read_chapter`。
+5. `Endpoint` 可以留空；留空时后端使用默认讯飞 ISE endpoint 或 `.env` 中的 `XFYUN_ISE_ENDPOINT`。
+6. 点击“保存配置”，后端返回 `configId` 后，后续“提交评测”会自动在 multipart/form-data 中携带该 `configId`。
+7. 点击“测试配置”可检查必填参数和讯飞鉴权 URL 是否能生成；该测试不要求发起一次真实语音评测。
+
+### 7.2 如何切换 mock / xfyun
+
+- 切换到真实讯飞：选择 `xfyun`，填写三项密钥，保存配置，看到页面显示“配置已保存”和 `configId` 后再提交评测。
+- 切换到 Mock：点击“使用 Mock 模式”，前端会调用运行时配置保存接口并保存 `provider=mock`，后续提交评测会走 Mock Provider。
+- 清空页面配置：点击“清空配置”，前端会删除当前 `configId` 对应的后端内存配置并清空页面状态；之后评测会回到 `.env` 配置或默认 Mock。
+
+### 7.3 配置优先级
+
+运行时页面配置和 `.env` 配置同时存在时，优先级如下：
+
+```text
+configId 页面配置 > .env 配置 > mock 默认模式
+```
+
+也就是说：
+
+- `/api/evaluate` 收到有效 `configId` 时，使用该页面配置中的 `provider` 和讯飞参数。
+- 未传 `configId` 时，继续使用 `.env` 中的 `EVALUATION_PROVIDER` 和 `XFYUN_*` 配置。
+- `.env` 未配置或配置为 `mock` 时，系统仍可使用 Mock Provider 完整运行。
+
+### 7.4 Secret 安全说明
+
+- 前端 `XFYUN API Secret` 输入框默认是 `password` 类型，可手动显示 / 隐藏。
+- 保存成功后，前端会清空完整 Secret 输入值，不会在普通结果区或调试结果区展示完整 Secret。
+- 页面不会把 `API Secret` 写入 `localStorage`；如后续需要持久化页面状态，只允许持久化 `configId`，不能持久化 Secret。
+- 后端 `GET /api/runtime-config/evaluation/:configId` 只返回脱敏配置：`apiSecret` 仅显示为 `configured` 或 `missing`，不会返回完整 Secret。
+- `.env.example` 只能保留空占位符，不能提交真实密钥。
+
+### 7.5 Demo 模式与生产模式差异
+
+当前页面配置是 Demo 便利功能：配置保存在单进程内存 `Map` 中，服务重启会丢失，也没有多用户隔离、审计、权限控制或密钥托管能力。生产环境建议使用后端安全配置中心、KMS/Secret Manager、租户级权限校验、审计日志、密钥轮换和最小权限访问，不建议让浏览器直接提交长期有效的三方 Secret。
+
+## 8. 后端接口
 
 ### `GET /api/health`
 
 返回当前运行模式和 Provider 名称。
+
+### Runtime Config 接口
+
+- `POST /api/runtime-config/evaluation`：保存页面运行时评测配置，返回 `configId`。`provider=mock` 不需要提交讯飞配置；`provider=xfyun` 需要提交 `appId`、`apiKey`、`apiSecret`，也可提交 `endpoint`、`language`、`category`。
+- `GET /api/runtime-config/evaluation/:configId`：返回脱敏后的运行时配置，绝不返回完整 `apiSecret`。
+- `POST /api/runtime-config/evaluation/test`：可传 `{ "configId": "cfg_xxx" }` 或直接传配置，检查 Mock 或讯飞配置是否合法，并验证讯飞鉴权 URL 可以生成。
+- `DELETE /api/runtime-config/evaluation/:configId`：删除后端内存中的页面配置。
 
 ### `POST /api/evaluate`
 
@@ -221,6 +275,7 @@ EVALUATION_PROVIDER=mock
 - `text`：待评测英文文本。
 - `audio`：录音或上传音频文件。
 - `source`：`browser` 或 `upload`。
+- `configId`：可选；传入页面保存配置返回的 `configId` 后，本次评测优先使用页面配置。
 
 返回结构保持前端兼容，并扩展调试字段：
 
@@ -243,7 +298,7 @@ EVALUATION_PROVIDER=mock
 }
 ```
 
-## 8. 测试流程
+## 9. 测试流程
 
 1. 启动后端和前端。
 2. 打开 <http://localhost:5173>。
@@ -256,7 +311,7 @@ EVALUATION_PROVIDER=mock
 9. 访问 <http://localhost:3001/api/evaluation/logs> 查看最近 20 条评测日志。
 10. 真实讯飞验收可参考 `docs/xfyun-test-guide.md`。
 
-## 9. Demo 验收标准
+## 10. Demo 验收标准
 
 - 不配置任何真实 API Key，也能跑通完整 Mock Demo。
 - `EVALUATION_PROVIDER=xfyun` 且配置真实密钥后，可以调用真实讯飞语音评测。
@@ -264,10 +319,10 @@ EVALUATION_PROVIDER=mock
 - 可以展示总分、准确度、流利度、完整度、清晰度、ASR 转写、中文纠错建议和单词级评分。
 - 可以展示 provider、音频转换格式、评测耗时、总耗时和 raw 调试信息。
 - 如果讯飞不返回单词级结果，系统不报错，并给出提示。
-- 所有 API Key 都只从 `.env` 读取，代码和 `.env.example` 不包含真实密钥。
+- API Key / API Secret 不能写死在代码里，代码和 `.env.example` 不包含真实密钥；页面运行时配置只用于 Demo，且不会把完整 Secret 返回前端或写入 localStorage。
 - Mock Provider 保留可用，不破坏现有前端页面。
 
-## 10. 后续迁移到微信小程序的注意事项
+## 11. 后续迁移到微信小程序的注意事项
 
 - 小程序端不能直接复用浏览器 `MediaRecorder` 和 `speechSynthesis`，需要改用小程序录音 API 与音频播放组件。
 - 小程序上传音频时要确认格式、采样率和第三方评测 API 要求一致。
